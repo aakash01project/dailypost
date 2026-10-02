@@ -16,7 +16,7 @@ import requests
 from PIL import Image
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 IG_USER_ID = os.environ["IG_USER_ID"]
 IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
