@@ -1,0 +1,26 @@
+name: Daily Instagram Post
+
+on:
+  schedule:
+    - cron: "30 13 * * *"   # 13:30 UTC = 7:00 PM IST daily
+  workflow_dispatch:         # lets you run it manually to test
+
+permissions:
+  contents: write
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python post_daily.py
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          IG_ACCESS_TOKEN: ${{ secrets.IG_ACCESS_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACCOUNT_THEME: "beautiful fantasy landscapes"
