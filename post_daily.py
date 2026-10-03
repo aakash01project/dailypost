@@ -204,7 +204,7 @@ def build_image_prompt(pose_en, description):
 def generate_image(prompt):
     """Free image generation via Pollinations AI. Returns a PIL image (RGB, 1080x1350)."""
     full_prompt = urllib.parse.quote(prompt)
-    url = url = f"https://image.pollinations.ai/prompt/{full_prompt}?width={W}&height={H}&nologo=true&model=flux""
+    url = f"https://image.pollinations.ai/prompt/{full_prompt}?width={W}&height={H}&nologo=true&model=flux"
 
     def attempt():
         r = send("GET", url, "Image generation", timeout=180)
