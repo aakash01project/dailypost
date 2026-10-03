@@ -27,7 +27,7 @@ import requests
 from PIL import Image, ImageDraw, ImageFont, features
 
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama3-70b-8192")
+GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 IG_USER_ID = os.environ["IG_USER_ID"]
 IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
