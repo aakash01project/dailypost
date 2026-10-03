@@ -2,8 +2,9 @@
 
 Flow:
   1. Pick today's asana from a fixed list (no repeats, correct Hindi names).
-  2. Groq writes: a Hindi one-line benefit, a pose description, Hinglish benefit points.
-  3. Hugging Face (SDXL/FLUX) draws a minimalist vector illustration; Pillow prints the HINDI text on it.
+  2. Text AI writes: a Hindi one-line benefit, a pose description, Hinglish benefit points.
+  3. Hugging Face (FLUX) draws a minimalist vector illustration; Pillow prints the HINDI text on it
+     (AI image models cannot spell Hindi, so we never let them draw the text).
   4. Image is stored in your public GitHub repo (public URL) -> Instagram Graph API posts it.
 
 SAFE RETRY RULES (so a problem never turns into hammering an API or double-posting):
@@ -25,22 +26,22 @@ import time
 import requests
 from PIL import Image, ImageDraw, ImageFont, features
 
-# APIs & Tokens
 GROQ_API_KEY = os.environ["GROQ_API_KEY"]
-GROQ_MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
+LLM_MODEL = os.environ.get("LLM_MODEL", "openai/gpt-oss-120b")
 IG_USER_ID = os.environ["IG_USER_ID"]
 IG_ACCESS_TOKEN = os.environ["IG_ACCESS_TOKEN"]
 HF_TOKEN = os.environ["HF_TOKEN"]
+HF_MODEL = os.environ.get("HF_MODEL", "black-forest-labs/FLUX.1-schnell")
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 GITHUB_REPOSITORY = os.environ["GITHUB_REPOSITORY"]  # "user/repo" (auto-set in Actions)
-GRAPH = "https://graph.instagram.com/v21.0"  # Instagram Login
+GRAPH = "https://graph.instagram.com/v21.0"  # Instagram Login (no Facebook Page needed)
 
 # ---- hard retry limits (total tries, including the first one) ----
-MAX_GROQ_TRIES = 3
+MAX_LLM_TRIES = 3
 MAX_IMAGE_TRIES = 3
 MAX_GITHUB_TRIES = 3
 MAX_IG_CREATE_TRIES = 2
-IG_PUBLISH_TRIES = 1  
+IG_PUBLISH_TRIES = 1  # never retry publishing: avoids double posts
 RETRY_STATUS = {408, 429, 500, 502, 503, 504}
 
 W, H = 1080, 1350  # Instagram 4:5 portrait
@@ -78,16 +79,20 @@ POSES = [
 DEVANAGARI = re.compile(r"[ऀ-ॿ]")
 LATIN = re.compile(r"[A-Za-z]")
 
+
 def todays_pose():
     idx = int(os.environ.get("POSE_INDEX", datetime.date.today().toordinal())) % len(POSES)
     return POSES[idx]
+
 
 # ---------------------------------------------------------------- safe retry helpers
 class FatalError(Exception):
     """Do not retry - stop the run with a clear message."""
 
+
 class TransientError(Exception):
     """Temporary problem - may be retried (within the limit)."""
+
 
 def send(method, url, what, **kw):
     """One HTTP request. Raises TransientError (retryable) or FatalError (stop now)."""
@@ -100,7 +105,8 @@ def send(method, url, what, **kw):
     msg = f"{what}: HTTP {r.status_code}: {r.text[:300]}"
     if r.status_code in RETRY_STATUS:
         raise TransientError(msg)
-    raise FatalError(msg) 
+    raise FatalError(msg)  # 400/401/403/404...: retrying would not help
+
 
 def retry(fn, what, tries, base_delay=5):
     """Run fn() at most `tries` times. Only TransientError is retried."""
@@ -111,11 +117,12 @@ def retry(fn, what, tries, base_delay=5):
             print(f"{what}: try {i}/{tries} failed - {e}")
             if i == tries:
                 raise FatalError(f"{what}: giving up after {tries} tries - {e}")
-            time.sleep(base_delay * 2 ** (i - 1))  
+            time.sleep(base_delay * 2 ** (i - 1))  # 5s, 10s, 20s ...
 
-# ---------------------------------------------------------------- Groq text
+
+# ---------------------------------------------------------------- Text AI text
 def get_texts(pose_en, pose_hi):
-    """Ask Groq for Hindi one-liner, pose description and Hinglish benefit points."""
+    """Ask Text AI for Hindi one-liner, pose description and Hinglish benefit points."""
     ask = (
         f"Yoga asana: {pose_en} ({pose_hi}).\n"
         "Return JSON with exactly these keys:\n"
@@ -136,13 +143,13 @@ def get_texts(pose_en, pose_hi):
         r = send(
             "POST",
             url,
-            "Groq",
-            headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+            "Text AI",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
             json={
-                "model": GROQ_MODEL,
+                "model": LLM_MODEL,
                 "messages": [{"role": "user", "content": ask}],
+                "response_format": {"type": "json_object"},
                 "temperature": 0.4,
-                "response_format": {"type": "json_object"}
             },
             timeout=60,
         )
@@ -153,11 +160,11 @@ def get_texts(pose_en, pose_hi):
             pts = [str(p).strip() for p in d["benefits_hinglish"] if str(p).strip()]
             desc = d["pose_description"].strip()
         except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
-            raise TransientError(f"Groq: unreadable answer ({e.__class__.__name__})")
+            raise TransientError(f"Text AI: unreadable answer ({e.__class__.__name__})")
         if not DEVANAGARI.search(hi) or LATIN.search(hi) or len(hi) > 110:
-            raise TransientError(f"Groq: Hindi line failed checks: {hi!r}")
+            raise TransientError(f"Text AI: Hindi line failed checks: {hi!r}")
         if len(pts) < 3 or not desc:
-            raise TransientError("Groq: answer incomplete")
+            raise TransientError("Text AI: answer incomplete")
         return {
             "benefit_hindi": hi,
             "pose_description": desc,
@@ -165,7 +172,8 @@ def get_texts(pose_en, pose_hi):
             "how_to": str(d.get("how_to_hinglish", "")).strip(),
         }
 
-    return retry(attempt, "Groq", MAX_GROQ_TRIES)
+    return retry(attempt, "Text AI", MAX_LLM_TRIES)
+
 
 def build_caption(pose_en, pose_hi, t):
     lines = [f"🧘 {pose_hi} ({pose_en})", "", "✨ Fayde (Benefits):"]
@@ -183,6 +191,7 @@ def build_caption(pose_en, pose_hi, t):
     ]
     return "\n".join(lines)[:2200]
 
+
 # ---------------------------------------------------------------- image
 def build_image_prompt(pose_en, description):
     return (
@@ -193,25 +202,39 @@ def build_image_prompt(pose_en, description):
         "empty space at the bottom. No text, no letters, no watermark, no logo."
     )
 
-def generate_image(prompt):
-    """Direct API generation via Hugging Face using SDXL for high quality."""
-    API_URL = "https://api.together.xyz/v1/images/generations"
-    
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    payload = {"inputs": prompt}
-    
-    def attempt():
-        r = send("POST", API_URL, "HuggingFace Image Gen", headers=headers, json=payload, timeout=120)
-        try:
-            img = Image.open(io.BytesIO(r.content)).convert("RGB")
-        except Exception as e:
-            raise TransientError(f"Image generation: invalid image data - {e}")
-        
-        if img.size != (W, H):
-            img = img.resize((W, H))
-        return img
 
-    return retry(attempt, "Image generation", MAX_IMAGE_TRIES, base_delay=15)
+def generate_image(prompt):
+    """Image via Hugging Face (FLUX.1-schnell). Returns a PIL image (RGB, 1080x1350).
+
+    Free users get a small monthly credit. When it runs out HF answers 402 and we STOP
+    (nothing is charged - no card is attached). Retries only for temporary errors.
+    """
+    from huggingface_hub import InferenceClient
+    from huggingface_hub.errors import HfHubHTTPError
+
+    client = InferenceClient(provider="auto", api_key=HF_TOKEN, timeout=180)
+
+    def attempt():
+        try:
+            img = client.text_to_image(
+                prompt, model=HF_MODEL, width=1024, height=1280  # 4:5, multiples of 16
+            )
+        except HfHubHTTPError as e:
+            code = e.response.status_code if e.response is not None else 0
+            if code in RETRY_STATUS:
+                raise TransientError(f"Image generation: HTTP {code}")
+            if code == 402:
+                raise FatalError("Hugging Face free monthly credit finished (HTTP 402). "
+                                 "Wait for next month or use another provider.")
+            raise FatalError(f"Image generation: HTTP {code} {str(e)[:200]}")
+        except (requests.ConnectionError, requests.Timeout):
+            raise TransientError("Image generation: network problem")
+        except Exception as e:
+            raise TransientError(f"Image generation: {e.__class__.__name__}: {str(e)[:200]}")
+        return img.convert("RGB").resize((W, H))
+
+    return retry(attempt, "Image generation", MAX_IMAGE_TRIES, base_delay=10)
+
 
 def find_hindi_font():
     candidates = (
@@ -223,6 +246,7 @@ def find_hindi_font():
     if not candidates:
         raise FatalError("No Devanagari font found (install fonts-noto-core).")
     return candidates[0]
+
 
 def wrap(draw, text, font, max_width):
     words, lines, cur = text.split(), [], ""
@@ -237,14 +261,17 @@ def wrap(draw, text, font, max_width):
         lines.append(cur)
     return lines
 
+
 def add_hindi_text(img, pose_hi, benefit_hi):
     """Print correct Hindi text on a soft gradient at the bottom of the image."""
     if not features.check("raqm"):
+        # Without raqm, Hindi matras render in the wrong order - never post that.
         raise FatalError("Pillow has no raqm support: Hindi text would render incorrectly.")
     font_path = find_hindi_font()
     title_font = ImageFont.truetype(font_path, 110, layout_engine=ImageFont.Layout.RAQM)
     body_font = ImageFont.truetype(font_path, 54, layout_engine=ImageFont.Layout.RAQM)
 
+    # Light illustration background -> dark gradient band keeps the white text readable.
     band_h = 520
     overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     od = ImageDraw.Draw(overlay)
@@ -265,10 +292,12 @@ def add_hindi_text(img, pose_hi, benefit_hi):
         y += line_h
     return img.convert("RGB")
 
+
 def to_jpeg(img):
     buf = io.BytesIO()
     img.save(buf, "JPEG", quality=92)
     return buf.getvalue()
+
 
 # ---------------------------------------------------------------- GitHub + Instagram
 def upload_to_github(jpeg_bytes):
@@ -280,7 +309,7 @@ def upload_to_github(jpeg_bytes):
         "message": f"Add image {name}",
         "content": base64.b64encode(jpeg_bytes).decode(),
     }
-    try:  
+    try:  # 404 here just means "file does not exist yet" - that is fine
         existing = requests.get(api, headers=headers, timeout=30)
         if existing.ok:
             payload["sha"] = existing.json()["sha"]
@@ -292,7 +321,7 @@ def upload_to_github(jpeg_bytes):
         MAX_GITHUB_TRIES,
     )
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/main/{name}"
-    for _ in range(10):  
+    for _ in range(10):  # wait (max ~50s) until the URL is actually reachable
         try:
             if requests.head(raw_url, timeout=20).status_code == 200:
                 return raw_url
@@ -300,6 +329,7 @@ def upload_to_github(jpeg_bytes):
             pass
         time.sleep(5)
     raise FatalError("Uploaded image URL is not reachable (is the repo public?)")
+
 
 def post_to_instagram(image_url, caption):
     r = retry(
@@ -315,7 +345,7 @@ def post_to_instagram(image_url, caption):
     )
     container_id = r.json()["id"]
 
-    for _ in range(20):  
+    for _ in range(20):  # wait (max ~100s) for processing
         try:
             s = requests.get(
                 f"{GRAPH}/{container_id}",
@@ -330,6 +360,7 @@ def post_to_instagram(image_url, caption):
             raise FatalError(f"Instagram processing error: {s}")
         time.sleep(5)
 
+    # Publish exactly ONCE - a retry could create a duplicate post.
     r = retry(
         lambda: send(
             "POST",
@@ -342,6 +373,7 @@ def post_to_instagram(image_url, caption):
         IG_PUBLISH_TRIES,
     )
     return r.json()["id"]
+
 
 def main():
     pose_en, pose_hi = todays_pose()
@@ -356,6 +388,7 @@ def main():
     print("Image URL:", url)
     post_id = post_to_instagram(url, caption)
     print("Posted! Media ID:", post_id)
+
 
 if __name__ == "__main__":
     try:
