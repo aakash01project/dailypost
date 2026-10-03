@@ -195,7 +195,7 @@ def build_image_prompt(pose_en, description):
 
 def generate_image(prompt):
     """Direct API generation via Hugging Face using SDXL for high quality."""
-    API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
+    API_URL = "https://api.together.xyz/v1/images/generations"
     
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     payload = {"inputs": prompt}
